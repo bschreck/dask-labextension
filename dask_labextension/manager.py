@@ -27,9 +27,13 @@ async def make_cluster(configuration: dict) -> Cluster:
     kwargs = dask.config.get("labextension.factory.kwargs")
     kwargs = {key.replace("-", "_"): entry for key, entry in kwargs.items()}
 
-    cluster = await Cluster(
-        *dask.config.get("labextension.factory.args"), **kwargs, asynchronous=True
-    )
+    try:
+        cluster = await Cluster(*dask.config.get('labextension.factory.args'),
+                            **kwargs,
+                            asynchronous=True)
+    except TypeError:
+        cluster = Cluster(*dask.config.get('labextension.factory.args'),
+                            **kwargs)
 
     configuration = dask.config.merge(
         dask.config.get("labextension.default"), configuration
@@ -271,17 +275,32 @@ def make_cluster_model(
     try:
         cores = sum(d["nthreads"] for d in info["workers"].values())
     except KeyError:  # dask.__version__ < 2.0
-        cores = sum(d["ncores"] for d in info["workers"].values())
+        try:
+            cores = sum(d["ncores"] for d in info["workers"].values())
+        except KeyError:
+            from distributed import Client
+            cli = Client(cluster)
+            cores = sum(cli.nthreads().values())
+
+    try:
+        workers = len(info["workers"])
+    except KeyError:
+        workers = len(cluster.workers())
+
+    try:
+        memory = sum(d["memory_limit"] for d in info["workers"].values())
+    except KeyError:
+        from distributed import Client
+        cli = Client(cluster)
+        memory = sum([w['memory_limit'] for w in cli.scheduler_info()['workers'].values()])
     assert isinstance(info, dict)
     model = dict(
         id=cluster_id,
         name=cluster_name,
         scheduler_address=cluster.scheduler_address,
         dashboard_link=cluster.dashboard_link or "",
-        workers=len(info["workers"]),
-        memory=utils.format_bytes(
-            sum(d["memory_limit"] for d in info["workers"].values())
-        ),
+        workers=workers,
+        memory=utils.format_bytes(memory),
         cores=cores,
     )
     if adaptive:
