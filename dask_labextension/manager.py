@@ -121,7 +121,11 @@ class DaskClusterManager:
         """
         cluster = self._clusters.get(cluster_id)
         if cluster:
-            await cluster.close()
+            close_obj = cluster.close()
+            try:
+                await close_obj
+            except TypeError:
+                pass
             self._clusters.pop(cluster_id)
             name = self._cluster_names.pop(cluster_id)
             adaptive = self._adaptives.pop(cluster_id, None)
@@ -268,18 +272,18 @@ def make_cluster_model(
     """
     # This would be a great target for a dataclass
     # once python 3.7 is in wider use.
+    from distributed import Client
+    cli = Client(cluster)
     try:
         info = cluster.scheduler_info
     except AttributeError:
-        info = cluster.scheduler.identity()
+        info = cli.scheduler_info()
     try:
         cores = sum(d["nthreads"] for d in info["workers"].values())
     except KeyError:  # dask.__version__ < 2.0
         try:
             cores = sum(d["ncores"] for d in info["workers"].values())
         except KeyError:
-            from distributed import Client
-            cli = Client(cluster)
             cores = sum(cli.nthreads().values())
 
     try:
@@ -290,8 +294,6 @@ def make_cluster_model(
     try:
         memory = sum(d["memory_limit"] for d in info["workers"].values())
     except KeyError:
-        from distributed import Client
-        cli = Client(cluster)
         memory = sum([w['memory_limit'] for w in cli.scheduler_info()['workers'].values()])
     assert isinstance(info, dict)
     model = dict(
